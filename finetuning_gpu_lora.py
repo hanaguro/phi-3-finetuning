@@ -70,19 +70,36 @@ label_encoder = LabelEncoder()
 label_encoder.fit(all_labels)    # ラベルを数値に変換
 
 def tokenize_function(examples):
-    # 各会話の value を取り出して連結する
-    texts = [" ".join(conv['value'] for conv in example) for example in examples['conversations']]
-    print(f"texts: {texts}")
+    texts = []
+    for conversation in examples["conversations"]:
+        prompt = ""
+        # 各ターンを走査して、話者ごとに明示的なラベルを付与
+        for turn in conversation:
+            sender = turn.get("from", "").strip().lower()
+            message = turn.get("value", "").strip()
+            if sender == "human":
+                prompt += "質問: " + message + "\n"
+            elif sender == "gpt":
+                prompt += "回答: " + message + "\n"
+            elif sender == "system":
+                # システムメッセージは文脈の補足として扱う（必要に応じて）
+                prompt += "システム: " + message + "\n"
+            else:
+                # 万一、想定外の送信者があった場合
+                prompt += message + "\n"
+        print(f"prompt: {prompt}")
+        texts.append(prompt)
+
     tokenized_inputs = tokenizer(texts, padding='max_length', truncation=True, max_length=512)
 
-    # ラベルが None でないかチェック
-    if "label" in examples and examples["label"] is not None: # labelキーが存在し、ラベルがNoneでない場合
+    # ラベルの処理（分類タスクの場合）
+    if "label" in examples and examples["label"] is not None:
         try:
             labels = label_encoder.transform(examples["label"])
         except ValueError:
-            labels = [0] * len(texts)  # ラベルがない場合、ダミーラベルを設定
+            labels = [0] * len(texts)  # ラベル変換ができなかった場合のダミー値
     else:
-        labels = [0] * len(texts)  # デフォルトラベル (クラス数に応じて変更)
+        labels = [0] * len(texts)
 
     tokenized_inputs["labels"] = labels
     return tokenized_inputs
