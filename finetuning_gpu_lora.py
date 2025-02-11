@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForCausalLM, TrainingArguments, DataCollatorForLanguageModeling 
 from datasets import Dataset
-from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
 from sklearn.preprocessing import LabelEncoder
 
 model_checkpoint = "./Phi-3.5-mini-instruct"
@@ -46,12 +46,17 @@ peft_config = LoraConfig(
     task_type=TaskType.CAUSAL_LM,
     r=16,  # ランク
     lora_alpha=32,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+#    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    target_modules="all-linear",
     lora_dropout=0.1,
 )
 
+model = prepare_model_for_kbit_training(model)
 model = get_peft_model(model, peft_config)
-print(f"Training target: {model.print_trainable_parameters()}")
+
+# トレーニング対象のパラメータを確認（ここで実行するのが推奨される位置）
+print(f"Training target: ")
+model.print_trainable_parameters()
 
 # データセットの準備
 df = pd.read_json('merged_sharegpt.json')
@@ -78,30 +83,30 @@ def tokenize_function(examples):
             sender = turn.get("from", "").strip().lower()
             message = turn.get("value", "").strip()
             if sender == "human":
-                prompt += "質問: " + message + "\n"
+                prompt += "<|user|>" + "\n" + message + "<|end|>\n"
             elif sender == "gpt":
-                prompt += "回答: " + message + "\n"
+                prompt += "<|assistant|>" + "\n" + message + "<|end|>\n"
             elif sender == "system":
                 # システムメッセージは文脈の補足として扱う（必要に応じて）
-                prompt += "システム: " + message + "\n"
+                prompt += "<|system|>" + "\n" + message + "<|end|>\n"
             else:
                 # 万一、想定外の送信者があった場合
-                prompt += message + "\n"
-        print(f"prompt: {prompt}")
+                prompt += message + "<|end|>\n"
+        print(f"prompt:\n{prompt}")
         texts.append(prompt)
 
     tokenized_inputs = tokenizer(texts, padding='max_length', truncation=True, max_length=512)
 
-    # ラベルの処理（分類タスクの場合）
-    if "label" in examples and examples["label"] is not None:
-        try:
-            labels = label_encoder.transform(examples["label"])
-        except ValueError:
-            labels = [0] * len(texts)  # ラベル変換ができなかった場合のダミー値
-    else:
-        labels = [0] * len(texts)
-
-    tokenized_inputs["labels"] = labels
+#    # ラベルの処理（分類タスクの場合）
+#    if "label" in examples and examples["label"] is not None:
+#        try:
+#            labels = label_encoder.transform(examples["label"])
+#        except ValueError:
+#            labels = [0] * len(texts)  # ラベル変換ができなかった場合のダミー値
+#    else:
+#        labels = [0] * len(texts)
+#
+#    tokenized_inputs["labels"] = labels
     return tokenized_inputs
 
 tokenized_datasets = dataset.map(tokenize_function, batched=True)
@@ -111,8 +116,10 @@ split_dataset = tokenized_datasets.train_test_split(test_size=0.1)
 train_dataset = split_dataset['train']
 eval_dataset = split_dataset['test']
 
-train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-eval_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+#train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+#eval_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+eval_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
 
 # TrainingArgumentsの設定
 training_args = TrainingArguments(
